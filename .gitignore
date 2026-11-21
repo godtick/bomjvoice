@@ -1,0 +1,18 @@
+# Разное
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Сборка
+build/
+dist/
+dist_installer/
+
+# Голос IVONA 2 Maxim (коммерческий) — в репозиторий не входит,
+# положите папку рядом с проектом, чтобы собрать exe с автоустановкой Maxim
+ivona_setup/
+dist/ivona_setup/
+
+# Установщик драйвера VB-CABLE — скачивается с vb-audio.com (см. installer/README-DRIVER.txt)
+installer/VBCABLE_Setup_x64.exe
