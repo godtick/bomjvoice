@@ -1,6 +1,5 @@
-from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QApplication, QFrame
+from PySide6.QtWidgets import QDialog, QLineEdit, QVBoxLayout, QApplication, QWidget
 from PySide6.QtCore import Qt, QEvent
-from PySide6.QtGui import QFont
 import time as _time
 
 from app.core.i18n import tr
@@ -11,126 +10,106 @@ _DEFAULT_PALETTE = dict(bg="#16171c", input="#1f2128", text="#e8e9ee",
                         nav_hover="#1e2027")
 
 
-class Overlay(QDialog):
-    """Оверлей по Alt+V: весь экран затемняется, по центру — непрозрачная
-    панель в цветах текущей темы, поле ввода сразу в фокусе.
-    Клик по затемнению скрывает оверлей. Панель можно таскать за верхнюю полосу."""
+class _Dimmer(QWidget):
+    """Полноэкранное затемнение под оверлеем. Отдельное окно: рисуется один
+    раз при открытии, а панель оверлея — маленькое окно, поэтому печать
+    текста не перерисовывает весь экран и не подлагивает.
+    Окно непрозрачное + setWindowOpacity: это заметно дешевле для
+    видеоподсистемы, чем полноэкранное полупрозрачное окно.
+    Клик по затемнению скрывает оверлей."""
 
-    PANEL_W, PANEL_H = 620, 170
+    OPACITY = 0.6
+
+    def __init__(self, on_click):
+        super().__init__()
+        self.on_click = on_click
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setStyleSheet("background: black;")
+        self.setWindowOpacity(self.OPACITY)
+
+    def mousePressEvent(self, event):
+        self.on_click()
+
+
+class Overlay(QDialog):
+    """Оверлей по Alt+V: экран затемняется (отдельное окно _Dimmer), по центру —
+    только поле ввода. Enter — озвучить, Esc — скрыть."""
+
+    PANEL_W, PANEL_H = 620, 72
 
     def __init__(self, on_submit):
         super().__init__()
         self.on_submit = on_submit
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        # полупрозрачность нужна самому диалогу, чтобы «затемнение» было видно
+        # полупрозрачность нужна для скруглённых углов панели
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(self.PANEL_W, self.PANEL_H)
 
-        self.panel = QFrame(self)
-        self.panel.setObjectName("panel")
-        self.panel.setFixedSize(self.PANEL_W, self.PANEL_H)
-
-        top = QHBoxLayout()
-        self.hint = QLabel(tr("Enter — озвучить · Esc — скрыть"))
-        self.hint.setObjectName("hint")
-        f = QFont(); f.setPointSize(13); f.setBold(True); self.hint.setFont(f)
-        top.addWidget(self.hint)
-        top.addStretch(1)
-
-        btn_min = QPushButton("—")
-        btn_min.setObjectName("obtn")
-        btn_min.setToolTip(tr("Скрыть"))
-        btn_min.clicked.connect(self.hide)
-        top.addWidget(btn_min)
-
-        btn_close = QPushButton("✕")
-        btn_close.setObjectName("obtn")
-        btn_close.setToolTip(tr("Закрыть"))
-        btn_close.clicked.connect(self._cancel)
-        top.addWidget(btn_close)
+        self.dimmer = _Dimmer(self._cancel)
 
         self.input = QLineEdit()
         self.input.setObjectName("oinput")
-        self.input.setPlaceholderText(tr("Введите текст…"))
+        self.input.setPlaceholderText(tr("Введите текст…  (Enter — озвучить, Esc — скрыть)"))
         self.input.returnPressed.connect(self._submit)
         self.input.installEventFilter(self)
 
-        lay = QVBoxLayout(self.panel)
-        lay.setContentsMargins(18, 10, 18, 16)
-        lay.setSpacing(8)
-        lay.addLayout(top)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(10, 10, 10, 10)
         lay.addWidget(self.input)
 
-        self._drag_pos = None
         self._opened_ts = 0.0
         self.set_theme(None)
 
     def eventFilter(self, obj, event):
-        # Гасим клавиши с зажатым Alt в первые полсекунды после открытия:
-        # автоповтор «V» из комбинации Alt+V иначе долетает в поле ввода.
+        # Гасим «эхо» клавиши вызова (V/М) в первые доли секунды после
+        # открытия: автоповтор зажатой V, события с зажатым Alt и одиночное
+        # нажатие той же физической клавиши (VK 0x56 — v/м в любой раскладке)
+        # иначе долетают в поле ввода.
         if obj is self.input and event.type() == QEvent.KeyPress:
-            if (_time.time() - self._opened_ts) < 0.5 and (event.modifiers() & Qt.AltModifier):
-                return True
+            dt = _time.time() - self._opened_ts
+            if dt < 0.5:
+                if event.modifiers() & Qt.AltModifier or event.isAutoRepeat():
+                    return True
+                if dt < 0.3 and (event.nativeVirtualKey() == 0x56
+                                 or event.text().lower() in ("v", "м")):
+                    return True
         return super().eventFilter(obj, event)
 
-    def set_theme(self, palette):
+    def set_theme(self, palette, key=None):
+        # применение стилей — дорогое, поэтому повторный вызов с той же
+        # темой просто пропускаем
+        if key is not None and key == getattr(self, "_theme_key", None):
+            return
+        self._theme_key = key
         p = dict(_DEFAULT_PALETTE)
         if palette:
             p.update(palette)
         self.setStyleSheet("""
-            QDialog { background: rgba(0, 0, 0, 150); }
-            #panel {
+            QDialog {
                 background: %(bg)s; border: 2px solid %(accent)s; border-radius: 14px;
             }
-            #hint { color: %(dim)s; background: transparent; }
             #oinput {
-                background: %(input)s; color: %(text)s; border: 1px solid %(border2)s;
+                background: %(input)s; color: %(text)s; border: none;
                 border-radius: 8px; padding: 8px 12px; font-size: 18px; font-weight: 600;
                 selection-background-color: %(accent)s; outline: none;
             }
-            #oinput:focus { border: 1px solid %(accent)s; }
-            #obtn {
-                background: transparent; color: %(dim)s; border: none; border-radius: 6px;
-                font-size: 14px; font-weight: 600; padding: 2px 10px; outline: none;
-            }
-            #obtn:hover { background: %(nav_hover)s; color: %(text)s; }
         """ % p)
-
-    def resizeEvent(self, event):
-        # панель вручную центрируем (без layout — иначе её нельзя таскать)
-        if not self._drag_pos:
-            self.panel.move((self.width() - self.panel.width()) // 2,
-                            (self.height() - self.panel.height()) // 2)
-        super().resizeEvent(event)
 
     def show_overlay(self):
         screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(screen)
-        self._drag_pos = None
+        self.dimmer.setGeometry(screen)
+        self.dimmer.show()
+        self.move(screen.x() + (screen.width() - self.width()) // 2,
+                  screen.y() + (screen.height() - self.height()) // 2)
         self._opened_ts = _time.time()
         self.show()
         self.raise_()
         self.activateWindow()
         self.input.setFocus(Qt.ActiveWindowFocusReason)
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            pos = event.position().toPoint()
-            if not self.panel.geometry().contains(pos):
-                # клик по затемнению — скрыть
-                self._cancel()
-                return
-            if pos.y() < self.panel.geometry().top() + 40:
-                self._drag_pos = event.globalPosition().toPoint() - self.panel.geometry().topLeft()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._drag_pos is not None and event.buttons() & Qt.LeftButton:
-            self.panel.move(event.globalPosition().toPoint() - self._drag_pos)
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._drag_pos = None
-        super().mouseReleaseEvent(event)
+    def hide(self):
+        self.dimmer.hide()
+        super().hide()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -142,8 +121,11 @@ class Overlay(QDialog):
         text = self.input.text().strip()
         self.input.clear()
         self.hide()
+        # озвучку запускаем уже после того, как окно скрылось и событие
+        # обработано — GUI-поток не ждёт speak()
         if text:
-            self.on_submit(text)
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self.on_submit(text))
 
     def _cancel(self):
         self.input.clear()

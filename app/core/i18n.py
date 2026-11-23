@@ -99,7 +99,8 @@ EN = {
     "Воспроизведение…": "Playing…",
 
     # --- оверлей ---
-    "Enter — озвучить · Esc — скрыть": "Enter — speak · Esc — hide",
+    "Введите текст…  (Enter — озвучить, Esc — скрыть)":
+        "Type text…  (Enter — speak, Esc — hide)",
     "Введите текст и нажмите Enter…": "Type text and press Enter…",
 
     # --- темы ---

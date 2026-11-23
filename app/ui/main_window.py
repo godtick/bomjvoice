@@ -354,7 +354,7 @@ class MainWindow(QMainWindow):
         self._speak_active = {}  # текст -> поколение: что сейчас синтезируется/играет
 
         self.bus = Bus()
-        self.bus.refresh_history.connect(self._fill_history)
+        self.bus.refresh_history.connect(self._on_history_dirty)
         self.bus.refresh_voices.connect(self._fill_voices)
         self.bus.status.connect(lambda m: self.statusBar().showMessage(m, 6000))
         self.bus.speak_text.connect(self.speak)
@@ -372,6 +372,27 @@ class MainWindow(QMainWindow):
         grip = QSizeGrip(self)
         self.statusBar().addPermanentWidget(grip)
         QTimer.singleShot(300, self._check_driver_on_start)
+        QTimer.singleShot(600, self._warm_up_overlay)
+
+    def _warm_up_overlay(self):
+        """Создаёт нативное окно оверлея заранее (невидимый показ/скрытие) —
+        тогда первый вызов по Alt+V открывается мгновенно, без лага."""
+        import os
+        if not self.settings.get("overlay_enabled"):
+            return
+        if QApplication.platformName() == "offscreen" or os.environ.get("BOMJVOICE_NO_DIALOGS"):
+            return
+        if self.overlay is None:
+            self.overlay = Overlay(on_submit=self.speak)
+            theme = self.settings.get("theme")
+            self.overlay.set_theme(THEME_PALETTES.get(theme, THEME_PALETTES["dark"]), key=theme)
+        self.overlay.setWindowOpacity(0.0)
+        self.overlay.dimmer.setWindowOpacity(0.0)
+        self.overlay.show_overlay()
+        self.overlay.hide()
+        self.overlay.setWindowOpacity(1.0)
+        self.overlay.dimmer.setWindowOpacity(type(self.overlay.dimmer).OPACITY)
+        self.activateWindow()  # вернуть фокус главному окну
 
     # ---------- свой заголовок ----------
     def toggle_maximized(self):
@@ -546,6 +567,7 @@ class MainWindow(QMainWindow):
 
         self.nav_buttons[0].setChecked(True)
         self.stack.setCurrentIndex(0)
+        self.stack.currentChanged.connect(self._on_page_changed)
         self.statusBar().showMessage(tr("Готово. Alt+V — оверлей."))
 
     @staticmethod
@@ -725,7 +747,7 @@ class MainWindow(QMainWindow):
         self._refresh_nav_icons()
         if self.overlay is not None:
             try:
-                self.overlay.set_theme(palette)
+                self.overlay.set_theme(palette, key=self.settings.get("theme"))
             except RuntimeError:
                 self.overlay = None
 
@@ -767,7 +789,6 @@ class MainWindow(QMainWindow):
         # поймёт, что его отменили, и не станет играть поверх нового
         self._speak_gen += 1
         gen = self._speak_gen
-        audio_out.stop_playing()
         voice_id = voice_id or self.settings.get("voice")
         device = self.settings.get("device")
         engine = self.tts
@@ -775,6 +796,9 @@ class MainWindow(QMainWindow):
 
         def work():
             try:
+                # остановка прежнего звука — в рабочем потоке: PortAudio
+                # может блокироваться на stop/close, а GUI не должен ждать
+                audio_out.stop_playing()
                 if use_cache:
                     cache_dir = CACHE_DIR / "binds"
                     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -812,6 +836,19 @@ class MainWindow(QMainWindow):
                     self._speak_active.pop(text, None)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _on_history_dirty(self):
+        """История поменялась. Перестройка списка — дорогая (сотни виджетов),
+        поэтому делаем её только когда вкладка «История» открыта."""
+        self._history_dirty = True
+        if getattr(self, "stack", None) is not None and self.stack.currentIndex() == 1:
+            self._fill_history()
+            self._history_dirty = False
+
+    def _on_page_changed(self, idx):
+        if idx == 1 and getattr(self, "_history_dirty", False):
+            self._fill_history()
+            self._history_dirty = False
 
     def _fill_history(self):
         # защита от вложенного вызова (см. _fill_voices)
@@ -1156,7 +1193,8 @@ class MainWindow(QMainWindow):
                 self.overlay = None
         if self.overlay is None:
             self.overlay = Overlay(on_submit=self.speak)
-        self.overlay.set_theme(THEME_PALETTES.get(self.settings.get("theme"), THEME_PALETTES["dark"]))
+        theme = self.settings.get("theme")
+        self.overlay.set_theme(THEME_PALETTES.get(theme, THEME_PALETTES["dark"]), key=theme)
         if self.overlay.isVisible():
             self.overlay.hide()
         else:
