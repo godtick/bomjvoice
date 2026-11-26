@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt, QTimer, QObject, Signal, QEvent, QSize, QByteArra
 from PySide6.QtGui import QIcon, QPixmap, QFont, QFontDatabase, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
+from app import __version__
 from app.core.settings import Settings, APP_DIR, CACHE_DIR
 from app.core.history import History
 from app.core.tts_engine import TTSEngine
@@ -731,6 +732,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(apply_btn)
         self._update_sound_labels()
         lay.addStretch(1)
+
+        version_label = QLabel(
+            tr("Версия: v%s") % __version__ + ' · <a href="https://github.com/godtick/bomjvoice" '
+            'style="color: #3d6fd6;">github.com/godtick/bomjvoice</a>')
+        version_label.setOpenExternalLinks(True)
+        version_label.setProperty("dim", True)
+        lay.addWidget(version_label)
 
         # колесо мыши над комбо/ползунками прокручивает страницу,
         # а не меняет их значения

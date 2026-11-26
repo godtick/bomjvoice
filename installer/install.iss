@@ -3,7 +3,7 @@
 ; «Download» без регистрации). Установщик сам поставит драйвер виртуального микрофона в тихом режиме.
 
 #define MyAppName "bomjvoice"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.3.0"
 
 [Setup]
 AppId={{7B3C9A11-4F2E-4D5A-9C01-B0MJVOICE0001}

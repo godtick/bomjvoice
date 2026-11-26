@@ -61,11 +61,31 @@ class Overlay(QDialog):
         self.set_theme(None)
 
     def eventFilter(self, obj, event):
+        # Пока оверлей виден, ВСЕ нажатия клавиш уходят в поле ввода —
+        # куда бы ни попал фокус, печатать можно сразу, без клика мышью.
+        # События из СВОЕГО дерева виджетов (всплытие поле -> диалог) не
+        # перенаправляем: иначе sendEvent обратно в поле зацикливается —
+        # переполнение стека. Сравнение через != (не «is not»): PySide6
+        # может вернуть другую Python-обёртку для того же C++-виджета.
+        own_tree = isinstance(obj, QWidget) and obj.window() == self
+        if (event.type() == QEvent.KeyPress and self.isVisible()
+                and obj != self.input and not own_tree):
+            if event.key() == Qt.Key_Escape:
+                self._cancel()
+                return True
+            # не перехватываем клавиши, если поверх открылся модальный диалог
+            from PySide6.QtWidgets import QApplication as _qApp
+            modal = _qApp.activeModalWidget()
+            if modal is not None and modal is not self:
+                return False
+            from PySide6.QtCore import QCoreApplication
+            QCoreApplication.sendEvent(self.input, event)
+            return True
         # Гасим «эхо» клавиши вызова (V/М) в первые доли секунды после
         # открытия: автоповтор зажатой V, события с зажатым Alt и одиночное
         # нажатие той же физической клавиши (VK 0x56 — v/м в любой раскладке)
         # иначе долетают в поле ввода.
-        if obj is self.input and event.type() == QEvent.KeyPress:
+        if obj == self.input and event.type() == QEvent.KeyPress:
             dt = _time.time() - self._opened_ts
             if dt < 0.5:
                 if event.modifiers() & Qt.AltModifier or event.isAutoRepeat():
@@ -102,12 +122,28 @@ class Overlay(QDialog):
         self.move(screen.x() + (screen.width() - self.width()) // 2,
                   screen.y() + (screen.height() - self.height()) // 2)
         self._opened_ts = _time.time()
+        # перенаправляем все нажатия клавиш в поле ввода, пока оверлей виден
+        app = QApplication.instance()
+        app.removeEventFilter(self)
+        app.installEventFilter(self)
         self.show()
         self.raise_()
         self.activateWindow()
         self.input.setFocus(Qt.ActiveWindowFocusReason)
+        # повторная попытка забрать фокус чуть позже: Windows не всегда
+        # отдаёт его сразу окну, открытому по глобальной горячей клавише
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(100, self._refocus)
+        QTimer.singleShot(300, self._refocus)
+
+    def _refocus(self):
+        if self.isVisible():
+            self.raise_()
+            self.activateWindow()
+            self.input.setFocus(Qt.ActiveWindowFocusReason)
 
     def hide(self):
+        QApplication.instance().removeEventFilter(self)
         self.dimmer.hide()
         super().hide()
 

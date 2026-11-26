@@ -96,4 +96,7 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,
     icon="app/ui/assets/icon.ico",
+    # запуск только от имени администратора (манифест requireAdministrator):
+    # установка драйвера/голосов и работа с устройствами требуют повышенных прав
+    uac_admin=True,
 )
